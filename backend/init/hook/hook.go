@@ -61,9 +61,42 @@ func Init() {
 		global.LOG.Fatalf("init service before start failed, err: %v", err)
 	}
 
+	apiInterfaceStatusSetting, err := settingRepo.Get(settingRepo.WithByKey("ApiInterfaceStatus"))
+	if err != nil {
+		global.LOG.Errorf("load service api interface from setting failed, err: %v", err)
+	}
+	global.CONF.System.ApiInterfaceStatus = apiInterfaceStatusSetting.Value
+	if apiInterfaceStatusSetting.Value == "enable" {
+		apiKeySetting, err := settingRepo.Get(settingRepo.WithByKey("ApiKey"))
+		if err != nil {
+			global.LOG.Errorf("load service api key from setting failed, err: %v", err)
+		}
+		global.CONF.System.ApiKey = apiKeySetting.Value
+		ipWhiteListSetting, err := settingRepo.Get(settingRepo.WithByKey("IpWhiteList"))
+		if err != nil {
+			global.LOG.Errorf("load service ip white list from setting failed, err: %v", err)
+		}
+		global.CONF.System.IpWhiteList = ipWhiteListSetting.Value
+		apiKeyValidityTimeSetting, err := settingRepo.Get(settingRepo.WithByKey("ApiKeyValidityTime"))
+		if err != nil {
+			global.LOG.Errorf("load service api key validity time from setting failed, err: %v", err)
+		}
+		global.CONF.System.ApiKeyValidityTime = apiKeyValidityTimeSetting.Value
+	}
+
+	if global.CONF.System.LicenseVerify == "" {
+		licenseVerify, err := settingRepo.Get(settingRepo.WithByKey("LicenseVerify"))
+		if err != nil {
+			global.LOG.Errorf("load service license verify from setting failed, err: %v", err)
+		}
+		global.CONF.System.LicenseVerify = licenseVerify.Value
+	}
+	handleLicenseVerify(global.CONF.System.LicenseVerify, settingRepo)
+
 	handleUserInfo(global.CONF.System.ChangeUserInfo, settingRepo)
 
 	handleCronjobStatus()
+	handleOllamaModelStatus()
 	handleSnapStatus()
 	loadLocalDir()
 	initDir()
@@ -127,6 +160,11 @@ func handleSnapStatus() {
 	}
 }
 
+func handleOllamaModelStatus() {
+	message := "the task was interrupted due to the restart of the 1panel service"
+	_ = global.DB.Model(&model.OllamaModel{}).Where("status = ?", constant.StatusWaiting).Updates(map[string]interface{}{"status": constant.StatusCanceled, "message": message}).Error
+}
+
 func handleCronjobStatus() {
 	var jobRecords []model.JobRecords
 	_ = global.DB.Where("status = ?", constant.StatusWaiting).Find(&jobRecords).Error
@@ -176,6 +214,12 @@ func loadLocalDir() {
 		return
 	}
 	global.LOG.Errorf("error type dir: %T", varMap["dir"])
+}
+
+func handleLicenseVerify(licenseVerify string, settingRepo repo.ISettingRepo) {
+	if err := settingRepo.Update("LicenseVerify", licenseVerify); err != nil {
+		global.LOG.Fatalf("init license verify before start failed, err: %v", err)
+	}
 }
 
 func handleUserInfo(tags string, settingRepo repo.ISettingRepo) {

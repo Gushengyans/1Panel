@@ -277,7 +277,7 @@ func configDefaultNginx(website *model.Website, domains []model.WebsiteDomain, a
 				server.UpdateRoot(rootIndex)
 				server.UpdatePHPProxy([]string{website.Proxy}, "")
 			}
-		case constant.RuntimeNode, constant.RuntimeJava, constant.RuntimeGo, constant.RuntimePython:
+		case constant.RuntimeNode, constant.RuntimeJava, constant.RuntimeGo, constant.RuntimePython, constant.RuntimeDotNet:
 			proxy := fmt.Sprintf("http://127.0.0.1:%d", runtime.Port)
 			server.UpdateRootProxy([]string{proxy})
 		}
@@ -642,9 +642,15 @@ func applySSL(website model.Website, websiteSSL model.WebsiteSSL, req request.We
 		}
 		if param.Name == "ssl_protocols" {
 			nginxParams[i].Params = req.SSLProtocol
+			if len(req.SSLProtocol) == 0 {
+				nginxParams[i].Params = []string{"TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1"}
+			}
 		}
 		if param.Name == "ssl_ciphers" {
 			nginxParams[i].Params = []string{req.Algorithm}
+			if len(req.Algorithm) == 0 {
+				nginxParams[i].Params = []string{"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:!aNULL:!eNULL:!EXPORT:!DSS:!DES:!RC4:!3DES:!MD5:!PSK:!KRB5:!SRP:!CAMELLIA:!SEED"}
+			}
 		}
 	}
 	if req.Hsts {
@@ -1002,23 +1008,22 @@ func saveCertificateFile(websiteSSL *model.WebsiteSSL, logger *log.Logger) {
 	}
 }
 
-func GetSystemSSL() (bool, bool, uint) {
+func GetSystemSSL() (bool, uint) {
 	sslSetting, err := settingRepo.Get(settingRepo.WithByKey("SSL"))
 	if err != nil {
 		global.LOG.Errorf("load service ssl from setting failed, err: %v", err)
-		return false, false, 0
+		return false, 0
 	}
 	if sslSetting.Value == "enable" {
 		sslID, _ := settingRepo.Get(settingRepo.WithByKey("SSLID"))
 		idValue, _ := strconv.Atoi(sslID.Value)
 		if idValue <= 0 {
-			return false, false, 0
+			return false, 0
 		}
 
-		auto, _ := settingRepo.Get(settingRepo.WithByKey("AutoRestart"))
-		return true, auto.Value == "enable", uint(idValue)
+		return true, uint(idValue)
 	}
-	return false, false, 0
+	return false, 0
 }
 
 func UpdateSSLConfig(websiteSSL model.WebsiteSSL) error {
@@ -1037,22 +1042,7 @@ func UpdateSSLConfig(websiteSSL model.WebsiteSSL) error {
 			return buserr.WithErr(constant.ErrSSLApply, err)
 		}
 	}
-	enable, auto, sslID := GetSystemSSL()
-	if enable && sslID == websiteSSL.ID {
-		fileOp := files.NewFileOp()
-		secretDir := path.Join(global.CONF.System.BaseDir, "1panel/secret")
-		if err := fileOp.WriteFile(path.Join(secretDir, "server.crt"), strings.NewReader(websiteSSL.Pem), 0600); err != nil {
-			global.LOG.Errorf("Failed to update the SSL certificate File for 1Panel System domain [%s] , err:%s", websiteSSL.PrimaryDomain, err.Error())
-			return err
-		}
-		if err := fileOp.WriteFile(path.Join(secretDir, "server.key"), strings.NewReader(websiteSSL.PrivateKey), 0600); err != nil {
-			global.LOG.Errorf("Failed to update the SSL certificate for 1Panel System domain [%s] , err:%s", websiteSSL.PrimaryDomain, err.Error())
-			return err
-		}
-		if auto {
-			_, _ = cmd.Exec("systemctl restart 1panel.service")
-		}
-	}
+	reloadSystemSSL(&websiteSSL, nil)
 	return nil
 }
 
@@ -1121,4 +1111,56 @@ func getResourceContent(fileOp files.FileOp, resourcePath string) (string, error
 		return string(content), nil
 	}
 	return "", nil
+}
+
+func ConfigAllowIPs(ips []string, website model.Website) error {
+	nginxFull, err := getNginxFull(&website)
+	if err != nil {
+		return err
+	}
+	nginxConfig := nginxFull.SiteConfig
+	config := nginxFull.SiteConfig.Config
+	server := config.FindServers()[0]
+	server.RemoveDirective("allow", nil)
+	server.RemoveDirective("deny", nil)
+	if len(ips) > 0 {
+		server.UpdateAllowIPs(ips)
+	}
+	if err := nginx.WriteConfig(config, nginx.IndentedStyle); err != nil {
+		return err
+	}
+	return nginxCheckAndReload(nginxConfig.OldContent, config.FilePath, nginxFull.Install.ContainerName)
+}
+
+func GetAllowIps(website model.Website) []string {
+	nginxFull, err := getNginxFull(&website)
+	if err != nil {
+		return nil
+	}
+	config := nginxFull.SiteConfig.Config
+	server := config.FindServers()[0]
+	dirs := server.GetDirectives()
+	var ips []string
+	for _, dir := range dirs {
+		if dir.GetName() == "allow" {
+			ips = append(ips, dir.GetParameters()...)
+		}
+	}
+	return ips
+}
+
+func ConfigAIProxy(website model.Website) error {
+	nginxFull, err := getNginxFull(&website)
+	if err != nil {
+		return nil
+	}
+	config := nginxFull.SiteConfig.Config
+	server := config.FindServers()[0]
+	dirs := server.GetDirectives()
+	for _, dir := range dirs {
+		if dir.GetName() == "location" && dir.GetParameters()[0] == "/" {
+			server.UpdateRootProxyForAi([]string{fmt.Sprintf("http://%s", website.Proxy)})
+		}
+	}
+	return nil
 }

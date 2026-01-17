@@ -17,7 +17,15 @@
                 <div class="mb-4" v-if="type === 'website'">
                     <el-alert :closable="false" type="warning" :title="$t('website.websiteBackupWarn')"></el-alert>
                 </div>
-                <el-upload ref="uploadRef" drag :on-change="fileOnChange" class="upload-demo" :auto-upload="false">
+                <el-upload
+                    :limit="1"
+                    ref="uploadRef"
+                    drag
+                    :on-exceed="handleExceed"
+                    :on-change="fileOnChange"
+                    class="upload-demo"
+                    :auto-upload="false"
+                >
                     <el-icon class="el-icon--upload"><upload-filled /></el-icon>
                     <div class="el-upload__text">
                         {{ $t('database.dropHelper') }}
@@ -48,7 +56,7 @@
                         </div>
                     </template>
                 </el-upload>
-                <el-button :disabled="isUpload" v-if="uploaderFiles.length === 1" icon="Upload" @click="onSubmit">
+                <el-button :disabled="isUpload || uploaderFiles.length !== 1" icon="Upload" @click="onSubmit">
                     {{ $t('commons.button.upload') }}
                 </el-button>
 
@@ -128,7 +136,7 @@
 import { reactive, ref } from 'vue';
 import { computeSize } from '@/utils/util';
 import i18n from '@/lang';
-import { UploadFile, UploadFiles, UploadInstance } from 'element-plus';
+import { UploadFile, UploadFiles, UploadInstance, UploadProps, UploadRawFile, genFileId } from 'element-plus';
 import { File } from '@/api/interface/file';
 import DrawerHeader from '@/components/drawer-header/index.vue';
 import { BatchDeleteFile, CheckFile, ChunkUploadFileData, GetUploadList } from '@/api/modules/files';
@@ -148,7 +156,6 @@ const currentRow = ref();
 const data = ref();
 const title = ref();
 const paginationConfig = reactive({
-    cacheSizeKey: 'upload-page-size',
     currentPage: 1,
     pageSize: 10,
     total: 0,
@@ -186,11 +193,11 @@ const acceptParams = async (params: DialogProps): Promise<void> => {
             break;
         case 'website':
             title.value = name.value;
-            baseDir.value = `${pathRes.data}/uploads/database/${type.value}/${detailName.value}/`;
+            baseDir.value = `${pathRes.data}/uploads/website/${type.value}/${detailName.value}/`;
             break;
         case 'app':
             title.value = name.value;
-            baseDir.value = `${pathRes.data}/uploads/database/${type.value}/${name.value}/`;
+            baseDir.value = `${pathRes.data}/uploads/app/${type.value}/${name.value}/`;
     }
     upVisible.value = true;
     search();
@@ -280,6 +287,13 @@ const handleClose = () => {
     upVisible.value = false;
 };
 
+const handleExceed: UploadProps['onExceed'] = (files) => {
+    uploadRef.value!.clearFiles();
+    const file = files[0] as UploadRawFile;
+    file.uid = genFileId();
+    uploadRef.value!.handleStart(file);
+};
+
 const onSubmit = async () => {
     if (uploaderFiles.value.length !== 1) {
         return;
@@ -294,7 +308,7 @@ const onSubmit = async () => {
         MsgError(i18n.global.t('commons.msg.fileNameErr'));
         return;
     }
-    const res = await CheckFile(baseDir.value + file.raw.name);
+    const res = await CheckFile(baseDir.value + file.raw.name, false);
     if (res.data) {
         MsgError(i18n.global.t('commons.msg.fileExist'));
         return;

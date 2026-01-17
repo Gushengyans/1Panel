@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -20,7 +19,6 @@ import (
 	"github.com/1Panel-dev/1Panel/backend/global"
 	"github.com/1Panel-dev/1Panel/backend/utils/docker"
 	"github.com/1Panel-dev/1Panel/backend/utils/files"
-	httpUtil "github.com/1Panel-dev/1Panel/backend/utils/http"
 	"github.com/pkg/errors"
 	"github.com/subosito/gotenv"
 	"gopkg.in/yaml.v3"
@@ -56,10 +54,7 @@ func handleNodeAndJava(create request.RuntimeCreate, runtime *model.Runtime, fil
 	}
 
 	go func() {
-		if _, _, err := httpUtil.HandleGet(nodeDetail.DownloadCallBackUrl, http.MethodGet, constant.TimeOut5s); err != nil {
-			global.LOG.Errorf("http request failed(handleNode), err: %v", err)
-			return
-		}
+		RequestDownloadCallBack(nodeDetail.DownloadCallBackUrl)
 	}()
 	go startRuntime(runtime)
 
@@ -354,6 +349,14 @@ func handleParams(create request.RuntimeCreate, projectDir string) (composeConte
 		if err != nil {
 			return
 		}
+	case constant.RuntimeDotNet:
+		create.Params["CODE_DIR"] = create.CodeDir
+		create.Params["DOTNET_VERSION"] = create.Version
+		create.Params["PANEL_APP_PORT_HTTP"] = create.Port
+		composeContent, err = handleCompose(env, composeContent, create, projectDir)
+		if err != nil {
+			return
+		}
 	}
 
 	newMap := make(map[string]string)
@@ -400,7 +403,7 @@ func handleCompose(env gotenv.Env, composeContent []byte, create request.Runtime
 				ports = append(ports, "${HOST_IP}:${PANEL_APP_PORT_HTTP}:${JAVA_APP_PORT}")
 			case constant.RuntimeGo:
 				ports = append(ports, "${HOST_IP}:${PANEL_APP_PORT_HTTP}:${GO_APP_PORT}")
-			case constant.RuntimePython:
+			case constant.RuntimePython, constant.RuntimeDotNet:
 				ports = append(ports, "${HOST_IP}:${PANEL_APP_PORT_HTTP}:${APP_PORT}")
 			}
 

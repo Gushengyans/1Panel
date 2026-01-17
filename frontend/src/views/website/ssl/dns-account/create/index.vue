@@ -34,16 +34,24 @@
                         </span>
                     </el-form-item>
                     <div v-if="account.type === 'AliYun' || account.type === 'HuaweiCloud'">
-                        <el-form-item label="Access Key" prop="authorization.accessKey">
+                        <el-form-item label="Access key" prop="authorization.accessKey">
                             <el-input v-model.trim="account.authorization['accessKey']"></el-input>
                         </el-form-item>
-                        <el-form-item label="Secret Key" prop="authorization.secretKey">
+                        <el-form-item label="Secret key" prop="authorization.secretKey">
                             <el-input v-model.trim="account.authorization['secretKey']"></el-input>
                         </el-form-item>
                     </div>
                     <el-form-item label="Region" prop="authorization.region" v-if="account.type === 'HuaweiCloud'">
                         <el-input v-model.trim="account.authorization['region']" :placeholder="'cn-north-1'"></el-input>
                     </el-form-item>
+                    <div v-if="account.type === 'Volcengine'">
+                        <el-form-item label="Access key" prop="authorization.accessKey">
+                            <el-input v-model.trim="account.authorization['accessKey']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Secret key" prop="authorization.secretKey">
+                            <el-input v-model.trim="account.authorization['secretKey']"></el-input>
+                        </el-form-item>
+                    </div>
                     <div v-if="account.type === 'TencentCloud'">
                         <el-form-item label="Secret ID" prop="authorization.secretID">
                             <el-input v-model.trim="account.authorization['secretID']"></el-input>
@@ -60,13 +68,44 @@
                             <el-input v-model.trim="account.authorization['token']"></el-input>
                         </el-form-item>
                     </div>
-
+                    <div v-if="account.type === 'FreeMyIP'">
+                        <el-form-item label="Token" prop="authorization.token">
+                            <el-input v-model.trim="account.authorization['token']"></el-input>
+                        </el-form-item>
+                    </div>
                     <div v-if="account.type === 'CloudFlare'">
                         <el-form-item label="EMAIL" prop="authorization.email">
                             <el-input v-model.trim="account.authorization['email']"></el-input>
                         </el-form-item>
                         <el-form-item label="API Token" prop="authorization.apiKey">
                             <el-input v-model.trim="account.authorization['apiKey']"></el-input>
+                        </el-form-item>
+                    </div>
+                    <div v-if="account.type === 'RainYun'">
+                        <el-form-item label="API Key" prop="authorization.apiKey">
+                            <el-input v-model.trim="account.authorization['apiKey']"></el-input>
+                        </el-form-item>
+                    </div>
+                    <div v-if="account.type === 'CloudDns'">
+                        <el-form-item label="Client ID" prop="authorization.clientID">
+                            <el-input v-model.trim="account.authorization['clientID']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Email" prop="authorization.email">
+                            <el-input v-model.trim="account.authorization['email']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Password" prop="authorization.password">
+                            <el-input v-model.trim="account.authorization['password']"></el-input>
+                        </el-form-item>
+                    </div>
+                    <div v-if="account.type === 'ClouDNS'">
+                        <el-form-item label="Auth ID" prop="authorization.authID">
+                            <el-input v-model.trim="account.authorization['authID']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Sub Auth ID" prop="authorization.subAuthID">
+                            <el-input v-model.trim="account.authorization['subAuthID']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Auth Password" prop="authorization.authPassword">
+                            <el-input v-model.trim="account.authorization['authPassword']"></el-input>
                         </el-form-item>
                     </div>
                     <el-form-item
@@ -91,6 +130,22 @@
                             <el-input v-model.trim="account.authorization['token']"></el-input>
                         </el-form-item>
                     </div>
+                    <div v-if="account.type === 'WestCN'">
+                        <el-form-item label="Username" prop="authorization.username">
+                            <el-input v-model.trim="account.authorization['username']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Password" prop="authorization.password">
+                            <el-input v-model.trim="account.authorization['password']"></el-input>
+                        </el-form-item>
+                    </div>
+                    <div v-if="account.type === 'PorkBun'">
+                        <el-form-item label="API Key" prop="authorization.apiKey">
+                            <el-input v-model.trim="account.authorization['apiKey']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Secret Key" prop="authorization.secretKey">
+                            <el-input v-model.trim="account.authorization['secretKey']"></el-input>
+                        </el-form-item>
+                    </div>
                 </el-form>
             </el-col>
         </el-row>
@@ -109,7 +164,7 @@
 import { CreateDnsAccount, UpdateDnsAccount } from '@/api/modules/website';
 import { Rules } from '@/global/form-rules';
 import i18n from '@/lang';
-import { MsgSuccess } from '@/utils/message';
+import { MsgSuccess, MsgError } from '@/utils/message';
 import { FormInstance } from 'element-plus';
 import { ref } from 'vue';
 import { DNSTypes } from '@/global/mimetype';
@@ -138,6 +193,11 @@ const rules = ref<any>({
         apiUser: [Rules.requiredInput],
         secretID: [Rules.requiredInput],
         region: [Rules.requiredInput],
+        clientID: [Rules.requiredInput],
+        email: [Rules.email],
+        password: [Rules.requiredInput],
+        authPassword: [Rules.requiredInput],
+        username: [Rules.requiredInput],
     },
 });
 const account = ref({
@@ -185,6 +245,12 @@ const submit = async (formEl: FormInstance | undefined) => {
     await formEl.validate((valid) => {
         if (!valid) {
             return;
+        }
+        if (account.value.type === 'ClouDNS') {
+            if (!account.value.authorization['authID'] && !account.value.authorization['subAuthID']) {
+                MsgError('Please input Auth ID or Sub Auth ID');
+                return;
+            }
         }
         loading.value = true;
 

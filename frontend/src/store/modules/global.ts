@@ -14,11 +14,10 @@ const GlobalStore = defineStore({
         language: '',
         themeConfig: {
             panelName: '',
-            primary: '#005EEB',
+            primary: '#005eeb',
             theme: 'auto',
-            isGold: false,
             footer: true,
-
+            themeColor: '',
             title: '',
             logo: '',
             logoWithText: '',
@@ -38,17 +37,19 @@ const GlobalStore = defineStore({
         defaultNetwork: 'all',
 
         isProductPro: false,
+        isIntl: false,
         isTrial: false,
         productProExpires: 0,
+        licenseVerify: '',
 
         errStatus: '',
     }),
     getters: {
         isDarkTheme: (state) =>
             state.themeConfig.theme === 'dark' ||
-            state.themeConfig.isGold ||
             (state.themeConfig.theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches),
-        isDarkGoldTheme: (state) => state.themeConfig.isGold && state.isProductPro,
+        isDarkGoldTheme: (state) => state.themeConfig.primary === '#F0BE96' && state.isProductPro,
+        docsUrl: (state) => (state.isIntl ? 'https://docs.1panel.pro' : 'https://1panel.cn/docs/v1'),
     },
     actions: {
         setOpenMenuTabs(openMenuTabs: boolean) {
@@ -70,6 +71,9 @@ const GlobalStore = defineStore({
             this.csrfToken = token;
         },
         updateLanguage(language: any) {
+            if (language === 'pt-BR') {
+                language = 'pt-br';
+            }
             this.language = language;
             localStorage.setItem('lang', language);
         },

@@ -441,16 +441,7 @@ func rebuildAllAppInstall() error {
 		go func(app model.AppInstall) {
 			defer wg.Done()
 			dockerComposePath := app.GetComposePath()
-			out, err := compose.Down(dockerComposePath)
-			if err != nil {
-				_ = handleErr(app, err, out)
-				return
-			}
-			out, err = compose.Up(dockerComposePath)
-			if err != nil {
-				_ = handleErr(app, err, out)
-				return
-			}
+			_, _ = compose.Up(dockerComposePath)
 			app.Status = constant.Running
 			_ = appInstallRepo.Save(context.Background(), &app)
 		}(appInstalls[i])
@@ -512,7 +503,8 @@ func hasOs(name string) bool {
 		strings.Contains(name, "arm64") ||
 		strings.Contains(name, "armv7") ||
 		strings.Contains(name, "ppc64le") ||
-		strings.Contains(name, "s390x")
+		strings.Contains(name, "s390x") ||
+		strings.Contains(name, "riscv64")
 }
 
 func loadOs() string {

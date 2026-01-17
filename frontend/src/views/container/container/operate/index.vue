@@ -131,10 +131,10 @@
                         </el-select>
                     </el-form-item>
 
-                    <el-form-item label="ipv4" prop="ipv4">
+                    <el-form-item label="IPv4" prop="ipv4">
                         <el-input v-model="dialogData.rowData!.ipv4" :placeholder="$t('container.inputIpv4')" />
                     </el-form-item>
-                    <el-form-item label="ipv6" prop="ipv6">
+                    <el-form-item label="IPv6" prop="ipv6">
                         <el-input v-model="dialogData.rowData!.ipv6" :placeholder="$t('container.inputIpv6')" />
                     </el-form-item>
 
@@ -357,23 +357,28 @@ const acceptParams = (params: DialogProps): void => {
     title.value = i18n.global.t('container.' + dialogData.value.title);
     if (params.title === 'edit') {
         dialogData.value.rowData.memory = Number(dialogData.value.rowData.memory.toFixed(2));
-        dialogData.value.rowData.cmd = dialogData.value.rowData.cmd || [];
-        let itemCmd = '';
-        for (const item of dialogData.value.rowData.cmd) {
-            itemCmd += `'${item}' `;
-        }
-        dialogData.value.rowData.cmdStr = itemCmd ? itemCmd.substring(0, itemCmd.length - 1) : '';
 
-        let itemEntrypoint = '';
-        if (dialogData.value.rowData?.entrypoint) {
-            for (const item of dialogData.value.rowData.entrypoint) {
-                itemEntrypoint += `'${item}' `;
+        let itemCmd = '';
+        dialogData.value.rowData.cmd = dialogData.value.rowData?.cmd || [];
+        for (const item of dialogData.value.rowData.cmd) {
+            if (item.indexOf(' ') !== -1) {
+                itemCmd += `"${escapeQuotes(item)}" `;
+            } else {
+                itemCmd += item + ' ';
             }
         }
+        dialogData.value.rowData.cmdStr = itemCmd.trimEnd();
+        let itemEntrypoint = '';
+        dialogData.value.rowData.entrypoint = dialogData.value.rowData?.entrypoint || [];
+        for (const item of dialogData.value.rowData.entrypoint) {
+            if (item.indexOf(' ') !== -1) {
+                itemEntrypoint += `"${escapeQuotes(item)}" `;
+            } else {
+                itemEntrypoint += item + ' ';
+            }
+        }
+        dialogData.value.rowData.entrypointStr = itemEntrypoint.trimEnd();
 
-        dialogData.value.rowData.entrypointStr = itemEntrypoint
-            ? itemEntrypoint.substring(0, itemEntrypoint.length - 1)
-            : '';
         dialogData.value.rowData.labels = dialogData.value.rowData.labels || [];
         dialogData.value.rowData.env = dialogData.value.rowData.env || [];
         dialogData.value.rowData.labelsStr = dialogData.value.rowData.labels.join('\n');
@@ -483,7 +488,11 @@ const onSubmit = async (formEl: FormInstance | undefined) => {
     if (!formEl) return;
     formEl.validate(async (valid) => {
         if (!valid) return;
-        dialogVisible.value = true;
+        if (dialogData.value.title === 'create') {
+            submit();
+        } else {
+            dialogVisible.value = true;
+        }
     });
 };
 
@@ -497,34 +506,16 @@ const submit = async () => {
     }
     dialogData.value.rowData!.cmd = [];
     if (dialogData.value.rowData?.cmdStr) {
-        if (dialogData.value.rowData?.cmdStr.indexOf(`'`) !== -1) {
-            let itemCmd = dialogData.value.rowData!.cmdStr.split(`'`);
-            for (const cmd of itemCmd) {
-                if (cmd && cmd !== ' ') {
-                    dialogData.value.rowData!.cmd.push(cmd);
-                }
-            }
-        } else {
-            let itemCmd = dialogData.value.rowData!.cmdStr.split(` `);
-            for (const cmd of itemCmd) {
-                dialogData.value.rowData!.cmd.push(cmd);
-            }
+        let itemCmd = splitStringIgnoringQuotes(dialogData.value.rowData?.cmdStr);
+        for (const item of itemCmd) {
+            dialogData.value.rowData!.cmd.push(item.replace(/(?<!\\)"/g, '').replaceAll('\\"', '"'));
         }
     }
     dialogData.value.rowData!.entrypoint = [];
     if (dialogData.value.rowData?.entrypointStr) {
-        if (dialogData.value.rowData?.entrypointStr.indexOf(`'`) !== -1) {
-            let itemEntrypoint = dialogData.value.rowData!.entrypointStr.split(`'`);
-            for (const entry of itemEntrypoint) {
-                if (entry && entry !== ' ') {
-                    dialogData.value.rowData!.entrypoint.push(entry);
-                }
-            }
-        } else {
-            let itemEntrypoint = dialogData.value.rowData!.entrypointStr.split(` `);
-            for (const entry of itemEntrypoint) {
-                dialogData.value.rowData!.entrypoint.push(entry);
-            }
+        let itemEntrypoint = splitStringIgnoringQuotes(dialogData.value.rowData?.entrypointStr);
+        for (const item of itemEntrypoint) {
+            dialogData.value.rowData!.entrypoint.push(item.replace(/(?<!\\)"/g, '').replaceAll('\\"', '"'));
         }
     }
     if (dialogData.value.rowData!.publishAllPorts) {
@@ -639,6 +630,27 @@ const isFromApp = (rowData: Container.ContainerHelper) => {
         return rowData.labels.indexOf('createdBy=Apps') > -1;
     }
     return false;
+};
+
+const escapeQuotes = (input) => {
+    return input.replace(/(?<!\\)"/g, '\\"');
+};
+
+const splitStringIgnoringQuotes = (input) => {
+    input = input.replace(/\\"/g, '<quota>');
+    const regex = /"([^"]*)"|(\S+)/g;
+    const result = [];
+    let match;
+
+    while ((match = regex.exec(input)) !== null) {
+        if (match[1]) {
+            result.push(match[1].replaceAll('<quota>', '\\"'));
+        } else if (match[2]) {
+            result.push(match[2].replaceAll('<quota>', '\\"'));
+        }
+    }
+
+    return result;
 };
 defineExpose({
     acceptParams,

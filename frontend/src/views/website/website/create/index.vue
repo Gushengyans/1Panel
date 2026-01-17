@@ -166,6 +166,7 @@
                                         <el-option label="Java" value="java"></el-option>
                                         <el-option label="Go" value="go"></el-option>
                                         <el-option label="Python" value="python"></el-option>
+                                        <el-option label=".NET" value="dotnet"></el-option>
                                     </el-select>
                                 </el-form-item>
                             </el-col>
@@ -249,7 +250,7 @@
                             >
                                 <template #append>{{ $t('app.cpuCore') }}</template>
                             </el-input>
-                            <span class="input-help">{{ $t('container.limitHelper') }}</span>
+                            <span class="input-help">{{ $t('container.limitHelper', [99999]) }}</span>
                         </el-form-item>
                         <el-form-item :label="$t('container.memoryLimit')" prop="appinstall.memoryLimit">
                             <el-input style="width: 40%" v-model.number="website.appinstall.memoryLimit" maxlength="10">
@@ -265,7 +266,7 @@
                                     </el-select>
                                 </template>
                             </el-input>
-                            <span class="input-help">{{ $t('container.limitHelper') }}</span>
+                            <span class="input-help">{{ $t('container.limitHelper', ['9999999999']) }}</span>
                         </el-form-item>
                         <el-form-item prop="allowPort" v-if="website.type === 'deployment'">
                             <el-checkbox
@@ -504,9 +505,9 @@ const changeType = (type: string) => {
 
 const searchAppInstalled = () => {
     GetAppInstalled({ type: 'website', unused: true, all: true, page: 1, pageSize: 100 }).then((res) => {
-        appInstalls.value = res.data;
-        if (res.data && res.data.length > 0) {
-            website.value.appInstallId = res.data[0].id;
+        appInstalls.value = res.data.items;
+        if (res.data.items && res.data.items.length > 0) {
+            website.value.appInstallId = res.data.items[0].id;
         }
     });
 };

@@ -52,9 +52,19 @@
                                 </span>
                                 <template #dropdown>
                                     <el-dropdown-menu>
+                                        <el-dropdown-item v-if="globalStore.isIntl" command="en">
+                                            English
+                                        </el-dropdown-item>
                                         <el-dropdown-item command="zh">中文(简体)</el-dropdown-item>
                                         <el-dropdown-item command="tw">中文(繁體)</el-dropdown-item>
-                                        <el-dropdown-item command="en">English</el-dropdown-item>
+                                        <el-dropdown-item v-if="!globalStore.isIntl" command="en">
+                                            English
+                                        </el-dropdown-item>
+                                        <el-dropdown-item command="ja">日本語</el-dropdown-item>
+                                        <el-dropdown-item command="pt-BR">Português (Brasil)</el-dropdown-item>
+                                        <el-dropdown-item command="ko">한국어</el-dropdown-item>
+                                        <el-dropdown-item command="ru">Русский</el-dropdown-item>
+                                        <el-dropdown-item command="ms">Bahasa Melayu</el-dropdown-item>
                                     </el-dropdown-menu>
                                 </template>
                             </el-dropdown>
@@ -62,6 +72,7 @@
                     </div>
                     <el-form-item prop="name" class="no-border">
                         <el-input
+                            name="username"
                             v-model.trim="loginForm.name"
                             :placeholder="$t('commons.login.username')"
                             class="form-input"
@@ -75,6 +86,7 @@
                     </el-form-item>
                     <el-form-item prop="password" class="no-border">
                         <el-input
+                            name="password"
                             type="password"
                             clearable
                             v-model.trim="loginForm.password"
@@ -120,22 +132,15 @@
                             {{ $t('commons.button.login') }}
                         </el-button>
                     </el-form-item>
-                    <el-form-item prop="agreeLicense">
-                        <el-checkbox v-model="loginForm.agreeLicense">
-                            <template #default>
-                                <span class="agree" v-html="$t('commons.login.licenseHelper')"></span>
-                            </template>
-                        </el-checkbox>
-                    </el-form-item>
-                    <div class="agree-helper">
-                        <span
-                            v-if="!loginForm.agreeLicense && !_isMobile()"
-                            class="input-error"
-                            style="line-height: 14px"
-                        >
-                            {{ $t('commons.login.errorAgree') }}
-                        </span>
-                    </div>
+                    <template v-if="!isIntl">
+                        <el-form-item prop="agreeLicense">
+                            <el-checkbox v-model="loginForm.agreeLicense">
+                                <template #default>
+                                    <span class="agree" v-html="$t('commons.login.licenseHelper')"></span>
+                                </template>
+                            </el-checkbox>
+                        </el-form-item>
+                    </template>
                 </el-form>
                 <div class="demo">
                     <span v-if="isDemo">
@@ -154,7 +159,7 @@
                 <span v-html="$t('commons.login.agreeContent')"></span>
             </div>
             <template #footer>
-                <span class="dialog-footer">
+                <span class="dialog-footer login-footer-btn">
                     <el-button @click="agreeVisible = false">
                         {{ $t('commons.button.notAgree') }}
                     </el-button>
@@ -168,26 +173,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import type { ElForm } from 'element-plus';
-import { loginApi, getCaptcha, mfaLoginApi, checkIsDemo, getLanguage } from '@/api/modules/auth';
+import { loginApi, getCaptcha, mfaLoginApi, checkIsDemo, getAuthSetting, checkIsIntl } from '@/api/modules/auth';
 import { GlobalStore, MenuStore, TabsStore } from '@/store';
 import { MsgSuccess } from '@/utils/message';
 import { useI18n } from 'vue-i18n';
 import { getSettingInfo } from '@/api/modules/setting';
+import { Rules } from '@/global/form-rules';
+import { encryptPassword } from '@/utils/util';
 
 const i18n = useI18n();
 const themeConfig = computed(() => globalStore.themeConfig);
 const globalStore = GlobalStore();
 const menuStore = MenuStore();
 const tabsStore = TabsStore();
-const usei18n = useI18n();
 
 const errAuthInfo = ref(false);
 const errCaptcha = ref(false);
 const errMfaInfo = ref(false);
 const isDemo = ref(false);
+const isIntl = ref(true);
 const agreeVisible = ref(false);
 
 type FormInstance = InstanceType<typeof ElForm>;
@@ -210,9 +217,31 @@ const loginForm = reactive({
 });
 
 const loginRules = reactive({
-    name: computed(() => [{ required: true, message: i18n.t('commons.rule.username'), trigger: 'blur' }]),
-    password: computed(() => [{ required: true, message: i18n.t('commons.rule.password'), trigger: 'blur' }]),
+    name: [{ required: true, validator: checkUsername, trigger: 'blur' }],
+    password: [{ required: true, validator: checkPassword, trigger: 'blur' }],
+    agreeLicense: [Rules.requiredSelect, { type: 'array', validator: checkAgreeLicense, trigger: 'blur' }],
 });
+
+function checkUsername(rule: any, value: any, callback: any) {
+    if (value === '') {
+        return callback(new Error(i18n.t('commons.rule.username')));
+    }
+    callback();
+}
+
+function checkPassword(rule: any, value: any, callback: any) {
+    if (value === '') {
+        return callback(new Error(i18n.t('commons.rule.password')));
+    }
+    callback();
+}
+
+function checkAgreeLicense(rule: any, value: any, callback: any) {
+    if (!value && !_isMobile()) {
+        return callback(new Error(i18n.t('commons.login.errorAgree')));
+    }
+    callback();
+}
 
 let isLoggingIn = false;
 const mfaButtonFocused = ref();
@@ -233,19 +262,38 @@ const captcha = reactive({
 const loading = ref<boolean>(false);
 const mfaShow = ref<boolean>(false);
 const router = useRouter();
-const dropdownText = ref('中文(简体)');
+const dropdownText = ref('English');
+
+const checkIsSystemIntl = async () => {
+    const res = await checkIsIntl();
+    isIntl.value = res.data;
+    globalStore.isIntl = isIntl.value;
+};
 
 function handleCommand(command: string) {
     loginForm.language = command;
-    usei18n.locale.value = command;
+    i18n.locale.value = command;
     globalStore.updateLanguage(command);
     if (command === 'zh') {
         dropdownText.value = '中文(简体)';
     } else if (command === 'en') {
         dropdownText.value = 'English';
+    } else if (command === 'pt-BR') {
+        dropdownText.value = 'Português (Brasil)';
     } else if (command === 'tw') {
         dropdownText.value = '中文(繁體)';
+    } else if (command === 'ko') {
+        dropdownText.value = '한국어';
+    } else if (command === 'ja') {
+        dropdownText.value = '日本語';
+    } else if (command === 'ru') {
+        dropdownText.value = 'Русский';
+    } else if (command === 'ms') {
+        dropdownText.value = 'Bahasa Melayu';
     }
+    nextTick(() => {
+        loginFormRef.value.clearValidate();
+    });
 }
 
 const agreeWithLogin = () => {
@@ -258,6 +306,9 @@ const login = (formEl: FormInstance | undefined) => {
     if (!formEl || isLoggingIn) return;
     formEl.validate(async (valid) => {
         if (!valid) return;
+        if (isIntl.value) {
+            loginForm.agreeLicense = true;
+        }
         if (!loginForm.agreeLicense) {
             if (_isMobile()) {
                 agreeVisible.value = true;
@@ -266,8 +317,7 @@ const login = (formEl: FormInstance | undefined) => {
         }
         let requestLoginForm = {
             name: loginForm.name,
-            password: loginForm.password,
-            ignoreCaptcha: globalStore.ignoreCaptcha,
+            password: encryptPassword(loginForm.password),
             captcha: loginForm.captcha,
             captchaID: captcha.captchaID,
             authMethod: 'session',
@@ -322,7 +372,7 @@ const mfaLogin = async (auto: boolean) => {
     if ((!auto && mfaLoginForm.code) || (auto && mfaLoginForm.code.length === 6)) {
         isLoggingIn = true;
         mfaLoginForm.name = loginForm.name;
-        mfaLoginForm.password = loginForm.password;
+        mfaLoginForm.password = encryptPassword(loginForm.password);
         const res = await mfaLoginApi(mfaLoginForm);
         if (res.code === 406) {
             errMfaInfo.value = true;
@@ -349,11 +399,12 @@ const checkIsSystemDemo = async () => {
     isDemo.value = res.data;
 };
 
-const loadLanguage = async () => {
+const loadLoginSetting = async () => {
     try {
-        const res = await getLanguage();
-        loginForm.language = res.data;
-        handleCommand(res.data);
+        const res = await getAuthSetting();
+        loginForm.language = res.data.language;
+        globalStore.ignoreCaptcha = !res.data.needCaptcha;
+        handleCommand(loginForm.language);
     } catch (error) {}
 };
 
@@ -363,16 +414,19 @@ const loadDataFromDB = async () => {
     i18n.locale.value = res.data.language;
     i18n.warnHtmlMessage = false;
     globalStore.entrance = res.data.securityEntrance;
+    globalStore.licenseVerify = res.data.licenseVerify;
     globalStore.setDefaultNetwork(res.data.defaultNetwork);
     globalStore.setOpenMenuTabs(res.data.menuTabs === 'enable');
     globalStore.updateLanguage(res.data.language);
-    globalStore.setThemeConfig({ ...themeConfig.value, theme: res.data.theme, panelName: res.data.panelName });
+    let theme = globalStore.themeConfig.theme === res.data.theme ? res.data.theme : globalStore.themeConfig.theme;
+    globalStore.setThemeConfig({ ...themeConfig.value, theme: theme, panelName: res.data.panelName });
 };
 
 onMounted(() => {
     globalStore.isOnRestart = false;
+    checkIsSystemIntl();
     loginVerify();
-    loadLanguage();
+    loadLoginSetting();
     document.title = globalStore.themeConfig.panelName;
     loginForm.agreeLicense = globalStore.agreeLicense;
     checkIsSystemDemo();
@@ -476,7 +530,11 @@ onMounted(() => {
         height: 45px;
         margin-top: 10px;
         background-color: #005eeb;
+        border-color: #005eeb;
         color: #ffffff;
+        &:hover {
+            --el-button-hover-border-color: #005eeb;
+        }
     }
 
     .demo {
@@ -503,6 +561,13 @@ onMounted(() => {
         color: #005eeb;
     }
 
+    :deep(a) {
+        color: #005eeb;
+        &:hover {
+            color: #005eeb95;
+        }
+    }
+
     :deep(.el-checkbox__input .el-checkbox__inner) {
         background-color: #fff !important;
         border-color: #fff !important;
@@ -521,6 +586,41 @@ onMounted(() => {
         min-height: 20px;
         margin-top: -20px;
         margin-left: 20px;
+    }
+
+    :deep(.el-input__inner) {
+        color: #000 !important;
+    }
+}
+.cursor-pointer {
+    outline: none;
+}
+
+.el-dropdown:focus-visible {
+    outline: none;
+}
+
+.el-tooltip__trigger:focus-visible {
+    outline: none;
+}
+
+:deep(.el-dropdown-menu__item:not(.is-disabled):hover) {
+    color: #005eeb !important;
+    background-color: #e5eefd !important;
+}
+:deep(.el-dropdown-menu__item:not(.is-disabled):focus) {
+    color: #005eeb !important;
+    background-color: #e5eefd !important;
+}
+
+:deep(.el-loading-mask) {
+    background-color: rgba(229, 238, 253, 0.8) !important;
+}
+
+.login-footer-btn {
+    .el-button--primary {
+        border-color: #005eeb !important;
+        background-color: #005eeb !important;
     }
 }
 </style>

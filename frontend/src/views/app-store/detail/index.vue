@@ -20,7 +20,7 @@
                     </div>
                     <div class="description mb-4">
                         <span>
-                            {{ language == 'zh' || language == 'tw' ? app.shortDescZh : app.shortDescEn }}
+                            {{ app.description }}
                         </span>
                     </div>
                     <br />
@@ -72,24 +72,18 @@
                 </div>
             </div>
         </div>
-        <MdEditor previewOnly v-model="app.readMe" :theme="isDarkTheme ? 'dark' : 'light'" />
+        <MarkDownEditor :content="app.readMe" />
     </el-drawer>
     <Install ref="installRef"></Install>
 </template>
 
 <script lang="ts" setup>
+import MarkDownEditor from '@/components/mkdown-editor/index.vue';
+
 import { GetApp, GetAppDetail } from '@/api/modules/app';
-import MdEditor from 'md-editor-v3';
 import { ref } from 'vue';
 import Install from './install/index.vue';
 import router from '@/routers';
-import { GlobalStore } from '@/store';
-import { getLanguage } from '@/utils/util';
-import { storeToRefs } from 'pinia';
-const globalStore = GlobalStore();
-const { isDarkTheme } = storeToRefs(globalStore);
-
-const language = getLanguage();
 
 const app = ref<any>({});
 const appDetail = ref<any>({});
@@ -146,6 +140,7 @@ const openInstall = () => {
         case 'java':
         case 'go':
         case 'python':
+        case 'dotnet':
             router.push({ path: '/websites/runtimes/' + app.value.type });
             break;
         default:
@@ -162,7 +157,7 @@ defineExpose({
 });
 </script>
 
-<style lang="scss">
+<style lang="scss" scoped>
 .brief {
     .name {
         span {
@@ -183,6 +178,7 @@ defineExpose({
     .icon {
         width: 180px;
         height: 180px;
+        background-color: #ffffff;
     }
 
     .version {
@@ -195,5 +191,9 @@ defineExpose({
             margin-left: 20px;
         }
     }
+}
+
+:deep(.md-editor-dark) {
+    background-color: var(--panel-main-bg-color-9);
 }
 </style>

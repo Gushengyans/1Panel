@@ -442,17 +442,14 @@ func deleteLink(ctx context.Context, install *model.AppInstall, deleteDB bool, f
 	return appInstallResourceRepo.DeleteBy(ctx, appInstallResourceRepo.WithAppInstallId(install.ID))
 }
 
-func getUpgradeCompose(install model.AppInstall, detail model.AppDetail) (string, error) {
-	if detail.DockerCompose == "" {
-		return "", nil
-	}
+func handleUpgradeCompose(install model.AppInstall, detail model.AppDetail) (map[string]interface{}, error) {
 	composeMap := make(map[string]interface{})
 	if err := yaml.Unmarshal([]byte(detail.DockerCompose), &composeMap); err != nil {
-		return "", err
+		return nil, err
 	}
 	value, ok := composeMap["services"]
 	if !ok || value == nil {
-		return "", buserr.New(constant.ErrFileParse)
+		return nil, buserr.New("ErrFileParse")
 	}
 	servicesMap := value.(map[string]interface{})
 	if len(servicesMap) == 1 {
@@ -469,6 +466,34 @@ func getUpgradeCompose(install model.AppInstall, detail model.AppDetail) (string
 		if install.ServiceName != oldServiceName {
 			delete(servicesMap, oldServiceName)
 		}
+	}
+	serviceValue := servicesMap[install.ServiceName].(map[string]interface{})
+
+	oldComposeMap := make(map[string]interface{})
+	if err := yaml.Unmarshal([]byte(install.DockerCompose), &oldComposeMap); err != nil {
+		return nil, err
+	}
+	oldValue, ok := oldComposeMap["services"]
+	if !ok || oldValue == nil {
+		return nil, buserr.New("ErrFileParse")
+	}
+	oldValueMap := oldValue.(map[string]interface{})
+	oldServiceValue := oldValueMap[install.ServiceName].(map[string]interface{})
+	if oldServiceValue["deploy"] != nil {
+		serviceValue["deploy"] = oldServiceValue["deploy"]
+	}
+	servicesMap[install.ServiceName] = serviceValue
+	composeMap["services"] = servicesMap
+	return composeMap, nil
+}
+
+func getUpgradeCompose(install model.AppInstall, detail model.AppDetail) (string, error) {
+	if detail.DockerCompose == "" {
+		return "", nil
+	}
+	composeMap, err := handleUpgradeCompose(install, detail)
+	if err != nil {
+		return "", err
 	}
 	envs := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(install.Env), &envs); err != nil {
@@ -584,7 +609,7 @@ func upgradeInstall(req request.AppInstallUpgrade) error {
 				_ = appDetailRepo.Update(context.Background(), detail)
 			}
 			go func() {
-				_, _, _ = httpUtil.HandleGet(detail.DownloadCallBackUrl, http.MethodGet, constant.TimeOut5s)
+				RequestDownloadCallBack(detail.DownloadCallBackUrl)
 			}()
 		}
 
@@ -822,7 +847,7 @@ func copyData(app model.App, appDetail model.AppDetail, appInstall *model.AppIns
 			return
 		}
 		go func() {
-			_, _, _ = httpUtil.HandleGet(appDetail.DownloadCallBackUrl, http.MethodGet, constant.TimeOut5s)
+			RequestDownloadCallBack(appDetail.DownloadCallBackUrl)
 		}()
 	}
 	appKey := app.Key
@@ -924,18 +949,34 @@ func upApp(appInstall *model.AppInstall, pullImages bool) {
 			errMsg string
 		)
 		if pullImages && appInstall.App.Type != "php" {
-			out, err = compose.Pull(appInstall.GetComposePath())
+			projectName := strings.ToLower(appInstall.Name)
+			envByte, err := files.NewFileOp().GetContent(appInstall.GetEnvPath())
 			if err != nil {
-				if out != "" {
-					if strings.Contains(out, "no such host") {
-						errMsg = i18n.GetMsgByKey("ErrNoSuchHost") + ":"
-					}
-					if strings.Contains(out, "timeout") {
-						errMsg = i18n.GetMsgByKey("ErrImagePullTimeOut") + ":"
+				return err
+			}
+			images, err := composeV2.GetDockerComposeImages(projectName, envByte, []byte(appInstall.DockerCompose))
+			if err != nil {
+				return err
+			}
+			for _, image := range images {
+				if out, err = cmd.ExecWithTimeOut("docker pull "+image, 60*time.Minute); err != nil {
+					if out != "" {
+						if strings.Contains(out, "no such host") {
+							errMsg = i18n.GetMsgByKey("ErrNoSuchHost") + ":"
+						}
+						if strings.Contains(out, "timeout") {
+							errMsg = i18n.GetMsgByKey("ErrImagePullTimeOut") + ":"
+						}
+					} else {
+						if err.Error() == buserr.New(constant.ErrCmdTimeout).Error() {
+							errMsg = i18n.GetMsgByKey("ErrImagePullTimeOut")
+						} else {
+							errMsg = i18n.GetMsgWithMap("ErrImagePull", map[string]interface{}{"err": err.Error()})
+						}
 					}
 					appInstall.Message = errMsg + out
+					return err
 				}
-				return err
 			}
 		}
 
@@ -1035,6 +1076,8 @@ func getApps(oldApps []model.App, items []dto.AppDefine) map[string]model.App {
 		app.Key = key
 		app.ShortDescZh = config.ShortDescZh
 		app.ShortDescEn = config.ShortDescEn
+		description, _ := json.Marshal(config.Description)
+		app.Description = string(description)
 		app.Website = config.Website
 		app.Document = config.Document
 		app.Github = config.Github
@@ -1091,11 +1134,7 @@ func handleLocalAppDetail(versionDir string, appDetail *model.AppDetail) error {
 		return buserr.WithMap(constant.ErrFileParseApp, map[string]interface{}{"name": "data.yml", "err": err.Error()}, err)
 	}
 
-	additionalProperties, ok := dataMap["additionalProperties"].(map[string]interface{})
-	if !ok {
-		return buserr.WithName(constant.ErrAppParamKey, "additionalProperties")
-	}
-
+	additionalProperties, _ := dataMap["additionalProperties"].(map[string]interface{})
 	formFieldsInterface, ok := additionalProperties["formFields"]
 	if ok {
 		formFields, ok := formFieldsInterface.([]interface{})
@@ -1138,14 +1177,31 @@ func handleLocalApp(appDir string) (app *model.App, err error) {
 		err = buserr.WithMap(constant.ErrFileParseApp, map[string]interface{}{"name": "data.yml", "err": err.Error()}, err)
 		return
 	}
-	app = &localAppDefine.AppProperty
+	appDefine := localAppDefine.AppProperty
+	app = &model.App{}
+	app.Name = appDefine.Name
+	app.TagsKey = append(appDefine.Tags, "Local")
+	app.Type = appDefine.Type
+	app.CrossVersionUpdate = appDefine.CrossVersionUpdate
+	app.Limit = appDefine.Limit
+	app.Recommend = appDefine.Recommend
+	app.Website = appDefine.Website
+	app.Github = appDefine.Github
+	app.Document = appDefine.Document
+	if appDefine.ShortDescZh != "" {
+		app.ShortDescZh = appDefine.ShortDescZh
+	}
+	if appDefine.ShortDescEn != "" {
+		app.ShortDescEn = appDefine.ShortDescEn
+	}
+	desc, _ := json.Marshal(appDefine.Description)
+	app.Description = string(desc)
+
+	app.Key = "local" + appDefine.Key
 	app.Resource = constant.AppResourceLocal
 	app.Status = constant.AppNormal
 	app.Recommend = 9999
-	app.TagsKey = append(app.TagsKey, "Local")
-	app.Key = "local" + app.Key
-	readMePath := path.Join(appDir, "README.md")
-	readMeByte, err := fileOp.GetContent(readMePath)
+	readMeByte, err := fileOp.GetContent(path.Join(appDir, "README.md"))
 	if err == nil {
 		app.ReadMe = string(readMeByte)
 	}
@@ -1307,9 +1363,10 @@ func handleInstalled(appInstallList []model.AppInstall, updated bool, sync bool)
 			Path:        installed.GetPath(),
 			CreatedAt:   installed.CreatedAt,
 			App: response.AppDetail{
-				Github:   installed.App.Github,
-				Website:  installed.App.Website,
-				Document: installed.App.Document,
+				Github:     installed.App.Github,
+				Website:    installed.App.Website,
+				Document:   installed.App.Document,
+				GpuSupport: installed.App.GpuSupport,
 			},
 		}
 		if updated {
@@ -1468,6 +1525,20 @@ func addDockerComposeCommonParam(composeMap map[string]interface{}, serviceName 
 	deploy["resources"] = resource
 	serviceValue["deploy"] = deploy
 
+	if req.GpuConfig {
+		resource["reservations"] = map[string]interface{}{
+			"devices": []map[string]interface{}{
+				{
+					"driver":       "nvidia",
+					"count":        "all",
+					"capabilities": []string{"gpu"},
+				},
+			},
+		}
+	} else {
+		delete(resource, "reservations")
+	}
+
 	ports, ok := serviceValue["ports"].([]interface{})
 	if ok {
 		for i, port := range ports {
@@ -1567,4 +1638,76 @@ func isHostModel(dockerCompose string) bool {
 		}
 	}
 	return false
+}
+
+func isGpuConfig(dockerCompose string) bool {
+	composeMap := make(map[string]interface{})
+	_ = yaml.Unmarshal([]byte(dockerCompose), &composeMap)
+	services, serviceValid := composeMap["services"].(map[string]interface{})
+	if !serviceValid {
+		return false
+	}
+	for _, service := range services {
+		serviceValue := service.(map[string]interface{})
+		deploy := map[string]interface{}{}
+		if de, ok := serviceValue["deploy"]; ok {
+			deploy = de.(map[string]interface{})
+		}
+		resource := map[string]interface{}{}
+		if res, ok := deploy["resources"]; ok {
+			resource = res.(map[string]interface{})
+		}
+		if reservations, ok := resource["reservations"]; ok {
+			reservationsMap := reservations.(map[string]interface{})
+			if _, dOk := reservationsMap["devices"]; dOk {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func RequestDownloadCallBack(downloadCallBackUrl string) {
+	if downloadCallBackUrl == "" {
+		return
+	}
+	_, _, _ = httpUtil.HandleGet(downloadCallBackUrl, http.MethodGet, constant.TimeOut5s)
+}
+
+func getAppTags(appID uint, lang string) ([]response.TagDTO, error) {
+	appTags, err := appTagRepo.GetByAppId(appID)
+	if err != nil {
+		return nil, err
+	}
+	var tagIds []uint
+	for _, at := range appTags {
+		tagIds = append(tagIds, at.TagId)
+	}
+	tags, err := tagRepo.GetByIds(tagIds)
+	if err != nil {
+		return nil, err
+	}
+	var res []response.TagDTO
+	for _, t := range tags {
+		if t.Name != "" {
+			tagDTO := response.TagDTO{
+				ID:   t.ID,
+				Key:  t.Key,
+				Name: t.Name,
+			}
+			res = append(res, tagDTO)
+		} else {
+			var translations = make(map[string]string)
+			_ = json.Unmarshal([]byte(t.Translations), &translations)
+			if name, ok := translations[lang]; ok {
+				tagDTO := response.TagDTO{
+					ID:   t.ID,
+					Key:  t.Key,
+					Name: name,
+				}
+				res = append(res, tagDTO)
+			}
+		}
+	}
+	return res, nil
 }

@@ -104,7 +104,7 @@
 import ConfirmDialog from '@/components/confirm-dialog/index.vue';
 import { dateFormat } from '@/utils/util';
 import { cleanLogs, getOperationLogs } from '@/api/modules/log';
-import { onMounted, reactive, ref } from '@vue/runtime-core';
+import { onMounted, reactive, ref } from 'vue';
 import i18n from '@/lang';
 import { MsgSuccess } from '@/utils/message';
 import { GlobalStore } from '@/store';
@@ -228,6 +228,9 @@ const loadDetail = (log: string) => {
     if (log.indexOf('[MonitorStoreDays]') !== -1) {
         return log.replace('[MonitorStoreDays]', '[' + i18n.global.t('setting.monitor') + ']');
     }
+    if (log.indexOf('[ApiInterfaceStatus]') !== -1) {
+        return log.replace('[ApiInterfaceStatus]', '[' + i18n.global.t('setting.apiInterface') + ']');
+    }
     return log;
 };
 
@@ -241,3 +244,11 @@ onMounted(() => {
     search();
 });
 </script>
+<style scoped lang="scss">
+.tag-button {
+    &.no-active {
+        background: none;
+        border: none;
+    }
+}
+</style>

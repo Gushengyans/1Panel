@@ -95,6 +95,10 @@ export const Languages = [
         label: 'css',
         value: ['css'],
     },
+    {
+        label: 'ini',
+        value: ['ini'],
+    },
 ];
 
 export const Rewrites = [
@@ -169,8 +173,8 @@ export const DNSTypes = [
         value: 'HuaweiCloud',
     },
     {
-        label: 'DNSPod (' + i18n.global.t('ssl.deprecated') + ')',
-        value: 'DnsPod',
+        label: 'GoDaddy',
+        value: 'Godaddy',
     },
     {
         label: 'Cloudflare',
@@ -185,12 +189,40 @@ export const DNSTypes = [
         value: 'NameCheap',
     },
     {
+        label: 'CloudDNS',
+        value: 'CloudDns',
+    },
+    {
+        label: 'ClouDNS',
+        value: 'ClouDNS',
+    },
+    {
         label: 'Name.com',
         value: 'NameCom',
     },
     {
-        label: 'GoDaddy',
-        value: 'Godaddy',
+        label: 'FreeMyIP',
+        value: 'FreeMyIP',
+    },
+    {
+        label: i18n.global.t('website.rainyun'),
+        value: 'RainYun',
+    },
+    {
+        label: i18n.global.t('website.westCN'),
+        value: 'WestCN',
+    },
+    {
+        label: 'PorkBun',
+        value: 'PorkBun',
+    },
+    {
+        label: i18n.global.t('website.volcengine'),
+        value: 'Volcengine',
+    },
+    {
+        label: 'DNSPod (' + i18n.global.t('ssl.deprecated') + ')',
+        value: 'DnsPod',
     },
 ];
 

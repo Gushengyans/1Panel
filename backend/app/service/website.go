@@ -87,13 +87,18 @@ type IWebsiteService interface {
 	LoadWebsiteDirConfig(req request.WebsiteCommonReq) (*response.WebsiteDirConfig, error)
 	UpdateSiteDir(req request.WebsiteUpdateDir) error
 	UpdateSitePermission(req request.WebsiteUpdateDirPermission) error
+
 	OperateProxy(req request.WebsiteProxyConfig) (err error)
 	GetProxies(id uint) (res []request.WebsiteProxyConfig, err error)
 	UpdateProxyFile(req request.NginxProxyUpdate) (err error)
+	DeleteProxy(req request.WebsiteProxyDel) (err error)
+
 	GetAuthBasics(req request.NginxAuthReq) (res response.NginxAuthRes, err error)
 	UpdateAuthBasic(req request.NginxAuthUpdate) (err error)
+
 	GetAntiLeech(id uint) (*response.NginxAntiLeechRes, error)
 	UpdateAntiLeech(req request.NginxAntiLeechUpdate) (err error)
+
 	OperateRedirect(req request.NginxRedirectReq) (err error)
 	GetRedirect(id uint) (res []response.NginxRedirectConfig, err error)
 	UpdateRedirectFile(req request.NginxRedirectUpdate) (err error)
@@ -313,12 +318,7 @@ func (w WebsiteService) CreateWebsite(create request.WebsiteCreate) (err error) 
 		switch runtime.Type {
 		case constant.RuntimePHP:
 			if runtime.Resource == constant.ResourceAppstore {
-				client, err := docker.NewDockerClient()
-				if err != nil {
-					return err
-				}
-				defer client.Close()
-				if !checkImageExist(client, runtime.Image) {
+				if !checkImageLike(runtime.Image) {
 					return buserr.WithName("ErrImageNotExist", runtime.Name)
 				}
 				var (
@@ -352,7 +352,7 @@ func (w WebsiteService) CreateWebsite(create request.WebsiteCreate) (err error) 
 				}
 				website.Proxy = proxy
 			}
-		case constant.RuntimeNode, constant.RuntimeJava, constant.RuntimeGo, constant.RuntimePython:
+		case constant.RuntimeNode, constant.RuntimeJava, constant.RuntimeGo, constant.RuntimePython, constant.RuntimeDotNet:
 			website.Proxy = fmt.Sprintf("127.0.0.1:%d", runtime.Port)
 		}
 	}
@@ -427,7 +427,9 @@ func (w WebsiteService) UpdateWebsite(req request.WebsiteUpdate) error {
 		}
 	}
 	website.PrimaryDomain = req.PrimaryDomain
-	website.WebsiteGroupID = req.WebsiteGroupID
+	if req.WebsiteGroupID > 0 {
+		website.WebsiteGroupID = req.WebsiteGroupID
+	}
 	website.Remark = req.Remark
 	website.IPV6 = req.IPV6
 
@@ -495,6 +497,10 @@ func (w WebsiteService) DeleteWebsite(req request.WebsiteDelete) error {
 	}
 	if err := websiteDomainRepo.DeleteBy(ctx, websiteDomainRepo.WithWebsiteId(req.ID)); err != nil {
 		return err
+	}
+	websiteID := GetWebsiteID()
+	if req.ID == websiteID {
+		_ = settingRepo.Update("MCP_WEBSITE_ID", "0")
 	}
 	tx.Commit()
 
@@ -1052,19 +1058,19 @@ func (w WebsiteService) OpWebsiteLog(req request.WebsiteLogReq) (*response.Websi
 		res.Content = strings.Join(lines, "\n")
 		return res, nil
 	case constant.DisableLog:
-		key := "access_log"
+		params := dto.NginxParam{}
 		switch req.LogType {
 		case constant.AccessLog:
+			params.Name = "access_log"
+			params.Params = []string{"off"}
 			website.AccessLog = false
 		case constant.ErrorLog:
-			key = "error_log"
+			params.Name = "error_log"
+			params.Params = []string{"/dev/null", "crit"}
 			website.ErrorLog = false
 		}
 		var nginxParams []dto.NginxParam
-		nginxParams = append(nginxParams, dto.NginxParam{
-			Name:   key,
-			Params: []string{"off"},
-		})
+		nginxParams = append(nginxParams, params)
 
 		if err := updateNginxConfig(constant.NginxScopeServer, nginxParams, &website); err != nil {
 			return nil, err
@@ -1343,6 +1349,14 @@ func (w WebsiteService) ChangePHPVersion(req request.WebsitePHPVersionReq) error
 	if runtime.Resource == constant.ResourceLocal || oldRuntime.Resource == constant.ResourceLocal {
 		return buserr.New("ErrPHPResource")
 	}
+	client, err := docker.NewDockerClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	if !checkImageExist(client, runtime.Image) {
+		return buserr.WithName("ErrImageNotExist", runtime.Name)
+	}
 	appInstall, err := appInstallRepo.GetFirst(commonRepo.WithByID(website.AppInstallID))
 	if err != nil {
 		return err
@@ -1550,6 +1564,29 @@ func (w WebsiteService) UpdateSitePermission(req request.WebsiteUpdateDirPermiss
 	return websiteRepo.Save(context.Background(), &website)
 }
 
+func (w WebsiteService) DeleteProxy(req request.WebsiteProxyDel) (err error) {
+	fileOp := files.NewFileOp()
+	website, err := websiteRepo.GetFirst(commonRepo.WithByID(req.ID))
+	if err != nil {
+		return
+	}
+	nginxInstall, err := getAppInstallByKey(constant.AppOpenresty)
+	if err != nil {
+		return
+	}
+	includeDir := path.Join(nginxInstall.GetPath(), "www", "sites", website.Alias, "proxy")
+	if !fileOp.Stat(includeDir) {
+		_ = fileOp.CreateDir(includeDir, 0755)
+	}
+	fileName := fmt.Sprintf("%s.conf", req.Name)
+	includePath := path.Join(includeDir, fileName)
+	backName := fmt.Sprintf("%s.bak", req.Name)
+	backPath := path.Join(includeDir, backName)
+	_ = fileOp.DeleteFile(includePath)
+	_ = fileOp.DeleteFile(backPath)
+	return updateNginxConfig(constant.NginxScopeServer, nil, &website)
+}
+
 func (w WebsiteService) OperateProxy(req request.WebsiteProxyConfig) (err error) {
 	var (
 		website      model.Website
@@ -1733,11 +1770,22 @@ func (w WebsiteService) GetProxies(id uint) (res []request.WebsiteProxyConfig, e
 		}
 		directives := config.GetDirectives()
 
-		location, ok := directives[0].(*components.Location)
-		if !ok {
-			err = errors.New("error")
-			return
+		var (
+			location *components.Location
+			ok       bool
+		)
+		for _, directive := range directives {
+			if directive.GetName() == "location" {
+				location, ok = directive.(*components.Location)
+				if ok {
+					break
+				}
+			}
 		}
+		if location == nil {
+			return nil, buserr.New("ErrConfigParse")
+		}
+
 		proxyConfig.ProxyPass = location.ProxyPass
 		proxyConfig.Cache = location.Cache
 		if location.CacheTime > 0 {
@@ -2040,7 +2088,19 @@ func (w WebsiteService) UpdateAntiLeech(req request.NginxAntiLeechUpdate) (err e
 		}
 		newBlock.Directives = append(newBlock.Directives, ifDir)
 		newDirective.Block = newBlock
-		block.Directives = append(block.Directives, &newDirective)
+
+		index := -1
+		for i, directive := range block.Directives {
+			if directive.GetName() == "include" {
+				index = i
+				break
+			}
+		}
+		if index != -1 {
+			block.Directives = append(block.Directives[:index], append([]components.IDirective{&newDirective}, block.Directives[index:]...)...)
+		} else {
+			block.Directives = append(block.Directives, &newDirective)
+		}
 	}
 
 	if err = nginx.WriteConfig(nginxFull.SiteConfig.Config, nginx.IndentedStyle); err != nil {

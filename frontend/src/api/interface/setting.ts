@@ -29,7 +29,6 @@ export namespace Setting {
         bindAddress: string;
         ssl: string;
         sslType: string;
-        autoRestart: string;
         allowIPs: string;
         bindDomain: string;
         securityEntrance: string;
@@ -58,6 +57,12 @@ export namespace Setting {
         proxyUser: string;
         proxyPasswd: string;
         proxyPasswdKeep: string;
+
+        apiInterfaceStatus: string;
+        apiKey: string;
+        ipWhiteList: string;
+        apiKeyValidityTime: number;
+        licenseVerify: string;
     }
     export interface SettingUpdate {
         key: string;
@@ -174,14 +179,23 @@ export namespace Setting {
         licenseName: string;
         assigneeName: string;
         productPro: string;
+        versionConstraint: string;
         trial: boolean;
         offline: boolean;
         status: string;
         message: string;
+        smsUsed: number;
+        smsTotal: number;
     }
     export interface LicenseStatus {
         productPro: string;
         trial: boolean;
         status: string;
+    }
+    export interface ApiConfig {
+        apiInterfaceStatus: string;
+        apiKey: string;
+        ipWhiteList: string;
+        apiKeyValidityTime: number;
     }
 }
